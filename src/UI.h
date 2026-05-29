@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <windows.h>
@@ -19,3 +20,7 @@ void RenderUI(Theme& theme, std::string& themeName,
               WindowEnumerator& enumerator, WindowOperator& winOp,
               PresetManager& presetMgr, PerWindowSettings& perWin,
               IconTexture& iconTex, HWND hWnd);
+
+// Locate mode (crosshair window picker)
+bool& UILocateMode();
+uint64_t& UILocateTarget();

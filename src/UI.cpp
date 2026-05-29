@@ -46,7 +46,12 @@ static struct {
     DWORD lastTick = 0;
     int closeTarget = -1;
     bool effectsHidden = false;
+    bool locating = false;       // crosshair window picker mode
+    uint64_t locateTarget = 0;   // HWND picked during locate
 } g;
+
+bool& UILocateMode()      { return g.locating; }
+uint64_t& UILocateTarget() { return g.locateTarget; }
 
 static void saveSettings(PerWindowSettings& perWin, const std::wstring& e, const std::wstring& t) {
     PerWindowData d;
@@ -108,6 +113,31 @@ void RenderUI(Theme& theme, std::string& themeName,
     if (WindowOperator::s_liveRefresh && now - lastOverlayTick > 100) {
         lastOverlayTick = now;
         WindowOperator::updateAllOverlays();
+    }
+
+    // ── Process locate target (set by main.cpp WndProc) ──
+    if (g.locateTarget != 0) {
+        HWND target = (HWND)g.locateTarget;
+        g.locateTarget = 0;
+        bool found = false;
+        for (int i = 0; i < (int)windows.size(); i++) {
+            if ((HWND)windows[i].hwnd == target) {
+                if (g.sel >= 0 && g.sel < (int)windows.size())
+                    saveSettings(perWin, windows[g.sel].exe, windows[g.sel].title);
+                g.sel = i;
+                loadSettings(perWin, windows[i].exe, windows[i].title);
+                HWND h = (HWND)windows[i].hwnd;
+                if (h) {
+                    winOp.setWindowAlpha(h, (unsigned char)g.alpha);
+                    winOp.setWindowTopmost(h, g.topChecked);
+                    winOp.setWindowTint(h, g.tintR, g.tintG, g.tintB, g.tintIntensity);
+                }
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            shouldRefresh = true; // window not in list yet, trigger refresh
     }
 
     // visible indices
@@ -192,9 +222,25 @@ void RenderUI(Theme& theme, std::string& themeName,
     }
     ImGui::PopStyleColor();
 
+    // Locate button — crosshair window picker
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text, theme.accentColor);
+    if (ImGui::SmallButton("+")) {
+        g.locating = true;
+        g.locateTarget = 0;
+        SetTimer(hWnd, 1, 50, NULL); // poll mouse every 50ms
+        ShowWindow(hWnd, SW_MINIMIZE);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Click to locate a window (ESC to cancel)");
+        ImGui::EndTooltip();
+    }
+    ImGui::PopStyleColor();
+
     // drag area — spans full title bar, buttons excluded on the right
     ImGui::SetCursorScreenPos(origin);
-    ImGui::InvisibleButton("##drag", ImVec2(ww - 150 * S, th));
+    ImGui::InvisibleButton("##drag", ImVec2(ww - 178 * S, th));
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) {
         ReleaseCapture();
         SendMessageW(hWnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);

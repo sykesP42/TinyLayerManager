@@ -16,13 +16,7 @@
 #include "PresetManager.h"
 #include "PerWindowSettings.h"
 #include "IconTexture.h"
-
-// ── UI function ──
-void RenderUI(Theme& theme, std::string& themeName,
-              std::vector<WindowItem>& windows, bool& shouldRefresh,
-              WindowEnumerator& enumerator, WindowOperator& winOp,
-              PresetManager& presetMgr, PerWindowSettings& perWin,
-              IconTexture& iconTex, HWND hWnd);
+#include "UI.h"
 
 extern float g_dpiScale;
 
@@ -107,6 +101,36 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_ERASEBKGND:
         return 1;
+
+    case WM_SETCURSOR:
+        if (UILocateMode()) {
+            SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(32515))); // IDC_CROSS
+            return TRUE;
+        }
+        break;
+
+    case WM_TIMER:
+        if (wParam == 1 && UILocateMode()) {
+            // Poll mouse state for locate mode
+            if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) {
+                POINT pt; GetCursorPos(&pt);
+                HWND target = WindowFromPoint(pt);
+                if (target) target = GetAncestor(target, GA_ROOT);
+                UILocateTarget() = (uint64_t)target;
+                UILocateMode() = false;
+                KillTimer(hWnd, 1);
+                ShowWindow(hWnd, SW_RESTORE);
+                SetForegroundWindow(hWnd);
+            }
+            else if (GetAsyncKeyState(VK_ESCAPE) & 0x8000 ||
+                     GetAsyncKeyState(VK_RBUTTON) & 0x8000) {
+                UILocateMode() = false;
+                KillTimer(hWnd, 1);
+                ShowWindow(hWnd, SW_RESTORE);
+                SetForegroundWindow(hWnd);
+            }
+        }
+        return 0;
 
     case WM_APP + 1: { // enumeration results from background thread
         auto* p = reinterpret_cast<std::vector<WindowItem>*>(lParam);
