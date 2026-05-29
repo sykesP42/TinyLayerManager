@@ -3,6 +3,9 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#ifndef PW_RENDERFULLCONTENT
+#define PW_RENDERFULLCONTENT 0x00000002
+#endif
 #endif
 
 bool WindowOperator::setAlphaByTitle(const std::wstring& title, unsigned char alpha) {
