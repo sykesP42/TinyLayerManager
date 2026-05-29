@@ -1,13 +1,16 @@
 #include "Theme.h"
 #include <cstdio>
-#include <filesystem>
 #include <shlobj.h>
+
+static void ensureDir(const std::wstring& dir) {
+    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+}
 
 static std::string dataDir() {
     wchar_t buf[MAX_PATH];
     SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, buf);
     std::wstring dir = std::wstring(buf) + L"\\TLM";
-    std::filesystem::create_directories(dir);
+    ensureDir(dir);
     char mbuf[MAX_PATH];
     wcstombs(mbuf, dir.c_str(), MAX_PATH);
     return std::string(mbuf);

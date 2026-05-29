@@ -1,14 +1,13 @@
 #include "PerWindowSettings.h"
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
 #include <shlobj.h>
 
 std::string PerWindowSettings::dataPath() {
     wchar_t buf[MAX_PATH];
     SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, buf);
     std::wstring dir = std::wstring(buf) + L"\\TLM";
-    std::filesystem::create_directories(dir);
+    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
     char mbuf[MAX_PATH];
     wcstombs(mbuf, dir.c_str(), MAX_PATH);
     return std::string(mbuf) + "\\perwindow.txt";

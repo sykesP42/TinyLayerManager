@@ -1,5 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
-#define _WIN32_WINNT 0x0600
+#define _WIN32_WINNT 0x0501
 #include <windows.h>
 
 #include "UI.h"
@@ -43,7 +43,7 @@ static struct {
     int tintIntensity = 0;
     char presetName[128] = {};
     char pathBuf[1024] = {};
-    uint64_t lastTick = 0;
+    DWORD lastTick = 0;
     int closeTarget = -1;
     bool effectsHidden = false;
 } g;
@@ -88,13 +88,13 @@ void RenderUI(Theme& theme, std::string& themeName,
     // ── Refresh ──
     if (shouldRefresh && !enumerator.isRunning()) {
         shouldRefresh = false;
-        g.lastTick = GetTickCount64();
+        g.lastTick = GetTickCount();
         enumerator.start([hWnd](std::vector<WindowItem> items) {
             auto* p = new std::vector<WindowItem>(std::move(items));
             PostMessageW(hWnd, WM_APP + 1, 0, (LPARAM)p);
         });
     }
-    uint64_t now = GetTickCount64();
+    uint64_t now = GetTickCount();
     if (!enumerator.isRunning() && now - g.lastTick > 2000) {
         g.lastTick = now;
         enumerator.start([hWnd](std::vector<WindowItem> items) {
@@ -380,7 +380,7 @@ void RenderUI(Theme& theme, std::string& themeName,
         // icon
         float iconS = 16 * S;
         float iconX = ix + 24 * S, iconY = iy + (itemH - iconS) / 2;
-        ID3D11ShaderResourceView* srv = iconTex.get(win.exe, win.hwnd);
+        LPDIRECT3DTEXTURE9 srv = iconTex.get(win.exe, win.hwnd);
         if (srv)
             dl2->AddImage((ImTextureID)(intptr_t)srv, ImVec2(iconX,iconY), ImVec2(iconX+iconS,iconY+iconS));
         else
@@ -479,7 +479,7 @@ void RenderUI(Theme& theme, std::string& themeName,
         // ── Title section: icon + title + exe path ──
         ImGui::SetCursorPos(ImVec2(12, 10));
         {
-            ID3D11ShaderResourceView* srv = iconTex.get(win.exe, win.hwnd);
+            LPDIRECT3DTEXTURE9 srv = iconTex.get(win.exe, win.hwnd);
             if (srv) {
                 ImGui::Image((ImTextureID)(intptr_t)srv, ImVec2(24, 24));
                 ImGui::SameLine();

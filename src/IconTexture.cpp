@@ -2,7 +2,7 @@
 #include <shellapi.h>
 #include <cstdio>
 
-IconTexture::IconTexture(ID3D11Device* device) : m_device(device) {
+IconTexture::IconTexture(LPDIRECT3DDEVICE9 device) : m_device(device) {
     if (m_device) m_device->AddRef();
 }
 
@@ -16,10 +16,10 @@ std::wstring IconTexture::makeKey(const std::wstring& exePath, uint64_t hwnd) {
     return L"hwnd:" + std::to_wstring(hwnd);
 }
 
-ID3D11ShaderResourceView* IconTexture::get(const std::wstring& exePath, uint64_t hwnd) {
+LPDIRECT3DTEXTURE9 IconTexture::get(const std::wstring& exePath, uint64_t hwnd) {
     auto k = makeKey(exePath, hwnd);
     auto it = m_cache.find(k);
-    if (it != m_cache.end()) return it->second.srv;
+    if (it != m_cache.end()) return it->second.tex;
 
     HICON hIcon = nullptr;
     bool needDestroy = false;
@@ -56,13 +56,13 @@ ID3D11ShaderResourceView* IconTexture::get(const std::wstring& exePath, uint64_t
         if (!hIcon) hIcon = (HICON)GetClassLongPtrW(h, GCLP_HICONSM);
     }
 
-    ID3D11ShaderResourceView* srv = nullptr;
+    LPDIRECT3DTEXTURE9 tex = nullptr;
     if (hIcon) {
-        srv = createFromHICON(hIcon);
+        tex = createFromHICON(hIcon);
         if (needDestroy) DestroyIcon(hIcon);
     }
 
-    if (!srv) {
+    if (!tex) {
         std::string letter;
         if (!exePath.empty()) {
             auto pos = exePath.find_last_of(L'\\');
@@ -80,14 +80,14 @@ ID3D11ShaderResourceView* IconTexture::get(const std::wstring& exePath, uint64_t
         float g = ((hash >> 8) & 0xFF) / 255.0f;
         float b = (hash & 0xFF) / 255.0f;
         if (r < 0.3f) r = 0.3f; if (g < 0.3f) g = 0.3f; if (b < 0.3f) b = 0.3f;
-        srv = createFallback(letter, r, g, b);
+        tex = createFallback(letter, r, g, b);
     }
 
-    m_cache[k] = {srv};
-    return srv;
+    m_cache[k] = {tex};
+    return tex;
 }
 
-ID3D11ShaderResourceView* IconTexture::createFromHICON(HICON hIcon) {
+LPDIRECT3DTEXTURE9 IconTexture::createFromHICON(HICON hIcon) {
     if (!hIcon || !m_device) return nullptr;
 
     ICONINFO ii;
@@ -103,25 +103,7 @@ ID3D11ShaderResourceView* IconTexture::createFromHICON(HICON hIcon) {
         return nullptr;
     }
 
-    D3D11_TEXTURE2D_DESC td = {};
-    td.Width = w; td.Height = h; td.MipLevels = 1; td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    td.SampleDesc.Count = 1;
-    td.Usage = D3D11_USAGE_DYNAMIC;
-    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    td.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-
-    ID3D11Texture2D* tex = nullptr;
-    if (m_device->CreateTexture2D(&td, nullptr, &tex) != S_OK) {
-        if (ii.hbmColor) DeleteObject(ii.hbmColor);
-        if (ii.hbmMask) DeleteObject(ii.hbmMask);
-        return nullptr;
-    }
-
-    HDC hdc = CreateCompatibleDC(nullptr);
-    if (!hdc) { tex->Release(); if (ii.hbmColor) DeleteObject(ii.hbmColor); if (ii.hbmMask) DeleteObject(ii.hbmMask); return nullptr; }
-
-    // Use DIBSection so alpha channel is preserved (CreateCompatibleBitmap drops alpha)
+    // Read icon pixels into BGRA buffer
     BITMAPINFO bmi = {};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = w;
@@ -131,45 +113,35 @@ ID3D11ShaderResourceView* IconTexture::createFromHICON(HICON hIcon) {
     bmi.bmiHeader.biCompression = BI_RGB;
 
     void* bits = nullptr;
+    HDC hdc = CreateCompatibleDC(nullptr);
     HBITMAP hbm = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!hbm) { DeleteDC(hdc); tex->Release(); if (ii.hbmColor) DeleteObject(ii.hbmColor); if (ii.hbmMask) DeleteObject(ii.hbmMask); return nullptr; }
+    if (!hbm) { DeleteDC(hdc); if (ii.hbmColor) DeleteObject(ii.hbmColor); if (ii.hbmMask) DeleteObject(ii.hbmMask); return nullptr; }
 
     HGDIOBJ old = SelectObject(hdc, hbm);
     DrawIconEx(hdc, 0, 0, hIcon, w, h, 0, nullptr, DI_NORMAL);
 
-    ID3D11DeviceContext* ctx = nullptr;
-    m_device->GetImmediateContext(&ctx);
-    D3D11_MAPPED_SUBRESOURCE mapped;
-    if (ctx && ctx->Map(tex, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped) == S_OK) {
-        // DIBSection BGRA bytes → D3D11 B8G8R8A8 — direct match
-        uint8_t* src = (uint8_t*)bits;
-        uint8_t* dst = (uint8_t*)mapped.pData;
-        for (int y = 0; y < h; y++) {
-            memcpy(dst + y * mapped.RowPitch, src + y * (w * 4), w * 4);
+    // Create D3D9 texture and copy pixels
+    LPDIRECT3DTEXTURE9 tex = nullptr;
+    if (m_device->CreateTexture(w, h, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &tex, nullptr) == D3D_OK) {
+        D3DLOCKED_RECT lr;
+        if (tex->LockRect(0, &lr, nullptr, 0) == D3D_OK) {
+            uint8_t* src = (uint8_t*)bits;
+            uint8_t* dst = (uint8_t*)lr.pBits;
+            for (int y = 0; y < h; y++)
+                memcpy(dst + y * lr.Pitch, src + y * (w * 4), w * 4);
+            tex->UnlockRect(0);
         }
-        ctx->Unmap(tex, 0);
     }
-    if (ctx) ctx->Release();
+
     SelectObject(hdc, old);
     DeleteObject(hbm);
     DeleteDC(hdc);
     if (ii.hbmColor) DeleteObject(ii.hbmColor);
     if (ii.hbmMask) DeleteObject(ii.hbmMask);
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-    srvDesc.Format = td.Format;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MipLevels = 1;
-
-    ID3D11ShaderResourceView* srv = nullptr;
-    if (m_device->CreateShaderResourceView(tex, &srvDesc, &srv) != S_OK)
-        srv = nullptr;
-
-    tex->Release();
-    return srv;
+    return tex;
 }
 
-ID3D11ShaderResourceView* IconTexture::createFallback(const std::string& letter, float r, float g, float b) {
+LPDIRECT3DTEXTURE9 IconTexture::createFallback(const std::string& letter, float r, float g, float b) {
     if (!m_device) return nullptr;
 
     int size = 16;
@@ -177,30 +149,23 @@ ID3D11ShaderResourceView* IconTexture::createFallback(const std::string& letter,
     uint32_t bg = ((uint8_t)(r * 255) << 16) | ((uint8_t)(g * 255) << 8) | (uint8_t)(b * 255) | 0xFF000000u;
     for (int i = 0; i < size * size; i++) pixels[i] = bg;
 
-    D3D11_TEXTURE2D_DESC td = {};
-    td.Width = size; td.Height = size; td.MipLevels = 1; td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    td.SampleDesc.Count = 1;
-    td.Usage = D3D11_USAGE_IMMUTABLE;
-    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    LPDIRECT3DTEXTURE9 tex = nullptr;
+    if (m_device->CreateTexture(size, size, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &tex, nullptr) != D3D_OK)
+        return nullptr;
 
-    D3D11_SUBRESOURCE_DATA sd = { pixels, (UINT)(size * 4), 0 };
-    ID3D11Texture2D* tex = nullptr;
-    if (m_device->CreateTexture2D(&td, &sd, &tex) != S_OK) return nullptr;
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-    srvDesc.Format = td.Format;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MipLevels = 1;
-
-    ID3D11ShaderResourceView* srv = nullptr;
-    m_device->CreateShaderResourceView(tex, &srvDesc, &srv);
-    tex->Release();
-    return srv;
+    D3DLOCKED_RECT lr;
+    if (tex->LockRect(0, &lr, nullptr, 0) == D3D_OK) {
+        uint8_t* dst = (uint8_t*)lr.pBits;
+        uint8_t* src = (uint8_t*)pixels;
+        for (int y = 0; y < size; y++)
+            memcpy(dst + y * lr.Pitch, src + y * (size * 4), size * 4);
+        tex->UnlockRect(0);
+    }
+    return tex;
 }
 
 void IconTexture::clear() {
     for (auto& [k, v] : m_cache)
-        if (v.srv) v.srv->Release();
+        if (v.tex) v.tex->Release();
     m_cache.clear();
 }

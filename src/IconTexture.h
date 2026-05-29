@@ -3,22 +3,22 @@
 #include <string>
 #include <map>
 #include <windows.h>
-#include <d3d11.h>
+#include <d3d9.h>
 
 class IconTexture {
 public:
-    IconTexture(ID3D11Device* device);
+    IconTexture(LPDIRECT3DDEVICE9 device);
     ~IconTexture();
 
-    ID3D11ShaderResourceView* get(const std::wstring& exePath, uint64_t hwnd);
+    LPDIRECT3DTEXTURE9 get(const std::wstring& exePath, uint64_t hwnd);
     void clear();
 
 private:
-    ID3D11Device* m_device;
-    struct TexEntry { ID3D11ShaderResourceView* srv; };
+    LPDIRECT3DDEVICE9 m_device;
+    struct TexEntry { LPDIRECT3DTEXTURE9 tex; };
     std::map<std::wstring, TexEntry> m_cache;
 
     static std::wstring makeKey(const std::wstring& exePath, uint64_t hwnd);
-    ID3D11ShaderResourceView* createFromHICON(HICON hIcon);
-    ID3D11ShaderResourceView* createFallback(const std::string& letter, float r, float g, float b);
+    LPDIRECT3DTEXTURE9 createFromHICON(HICON hIcon);
+    LPDIRECT3DTEXTURE9 createFallback(const std::string& letter, float r, float g, float b);
 };

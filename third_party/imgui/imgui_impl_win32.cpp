@@ -83,7 +83,7 @@
 #include <windows.h>
 #include <windowsx.h> // GET_X_LPARAM(), GET_Y_LPARAM()
 #include <tchar.h>
-#include <dwmapi.h>
+// #include <dwmapi.h>  // removed: dynamically loaded below for XP compatibility
 
 // Using XInput for gamepad (will load DLL dynamically)
 #ifndef IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
@@ -877,9 +877,17 @@ float ImGui_ImplWin32_GetDpiScaleForHwnd(void* hwnd)
 // Transparency related helpers (optional)
 //--------------------------------------------------------------------------------------------------------
 
-#if defined(_MSC_VER)
-#pragma comment(lib, "dwmapi")  // Link with dwmapi.lib. MinGW will require linking with '-ldwmapi'
+// DWM types and constants (defined locally for XP compatibility)
+#ifndef DWM_BB_ENABLE
+#define DWM_BB_ENABLE         0x00000001
+#define DWM_BB_BLURREGION     0x00000002
 #endif
+typedef struct _DWM_BLURBEHIND_LOCAL {
+    DWORD dwFlags;
+    BOOL  fEnable;
+    HRGN  hRgnBlur;
+    BOOL  fTransitionOnMaximized;
+} DWM_BLURBEHIND_LOCAL;
 
 // [experimental]
 // Borrowed from GLFW's function updateFramebufferTransparency() in src/win32_window.c
@@ -889,28 +897,49 @@ void ImGui_ImplWin32_EnableAlphaCompositing(void* hwnd)
     if (!_IsWindowsVistaOrGreater())
         return;
 
-    BOOL composition;
-    if (FAILED(::DwmIsCompositionEnabled(&composition)) || !composition)
+    // Dynamically load dwmapi.dll for XP compatibility
+    HMODULE hDwm = ::LoadLibraryW(L"dwmapi.dll");
+    if (!hDwm) return;
+
+    typedef HRESULT (WINAPI *PFN_DwmIsCompositionEnabled)(BOOL*);
+    typedef HRESULT (WINAPI *PFN_DwmGetColorizationColor)(DWORD*, BOOL*);
+    typedef HRESULT (WINAPI *PFN_DwmEnableBlurBehindWindow)(HWND, const DWM_BLURBEHIND_LOCAL*);
+
+    auto pfnDwmIsCompositionEnabled = (PFN_DwmIsCompositionEnabled)::GetProcAddress(hDwm, "DwmIsCompositionEnabled");
+    auto pfnDwmGetColorizationColor = (PFN_DwmGetColorizationColor)::GetProcAddress(hDwm, "DwmGetColorizationColor");
+    auto pfnDwmEnableBlurBehindWindow = (PFN_DwmEnableBlurBehindWindow)::GetProcAddress(hDwm, "DwmEnableBlurBehindWindow");
+
+    if (!pfnDwmIsCompositionEnabled || !pfnDwmGetColorizationColor || !pfnDwmEnableBlurBehindWindow) {
+        ::FreeLibrary(hDwm);
         return;
+    }
+
+    BOOL composition;
+    if (FAILED(pfnDwmIsCompositionEnabled(&composition)) || !composition) {
+        ::FreeLibrary(hDwm);
+        return;
+    }
 
     BOOL opaque;
     DWORD color;
-    if (_IsWindows8OrGreater() || (SUCCEEDED(::DwmGetColorizationColor(&color, &opaque)) && !opaque))
+    if (_IsWindows8OrGreater() || (SUCCEEDED(pfnDwmGetColorizationColor(&color, &opaque)) && !opaque))
     {
         HRGN region = ::CreateRectRgn(0, 0, -1, -1);
-        DWM_BLURBEHIND bb = {};
+        DWM_BLURBEHIND_LOCAL bb = {};
         bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
         bb.hRgnBlur = region;
         bb.fEnable = TRUE;
-        ::DwmEnableBlurBehindWindow((HWND)hwnd, &bb);
+        pfnDwmEnableBlurBehindWindow((HWND)hwnd, &bb);
         ::DeleteObject(region);
     }
     else
     {
-        DWM_BLURBEHIND bb = {};
+        DWM_BLURBEHIND_LOCAL bb = {};
         bb.dwFlags = DWM_BB_ENABLE;
-        ::DwmEnableBlurBehindWindow((HWND)hwnd, &bb);
+        pfnDwmEnableBlurBehindWindow((HWND)hwnd, &bb);
     }
+
+    ::FreeLibrary(hDwm);
 }
 
 //---------------------------------------------------------------------------------------------------------

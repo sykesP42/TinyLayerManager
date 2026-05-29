@@ -48,7 +48,7 @@ static BOOL CALLBACK EnumProc(HWND hwnd, LPARAM lParam) {
     GetWindowThreadProcessId(hwnd, &pid);
 
     std::wstring exePath;
-    HANDLE ph = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    HANDLE ph = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
     if (ph) {
         wchar_t path[MAX_PATH];
         if (GetModuleFileNameExW(ph, NULL, path, MAX_PATH))
