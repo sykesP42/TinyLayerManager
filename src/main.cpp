@@ -107,7 +107,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(32515))); // IDC_CROSS
             return TRUE;
         }
-        break;
+        // Let DefWindowProc handle all other cursor states
+        return DefWindowProcW(hWnd, msg, wParam, lParam);
 
     case WM_TIMER:
         if (wParam == 1 && UILocateMode()) {
@@ -121,6 +122,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 KillTimer(hWnd, 1);
                 ShowWindow(hWnd, SW_RESTORE);
                 SetForegroundWindow(hWnd);
+                return 0;
             }
             else if (GetAsyncKeyState(VK_ESCAPE) & 0x8000 ||
                      GetAsyncKeyState(VK_RBUTTON) & 0x8000) {
@@ -128,9 +130,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 KillTimer(hWnd, 1);
                 ShowWindow(hWnd, SW_RESTORE);
                 SetForegroundWindow(hWnd);
+                return 0;
             }
         }
-        return 0;
+        break; // Let DefWindowProc handle other timers
 
     case WM_APP + 1: { // enumeration results from background thread
         auto* p = reinterpret_cast<std::vector<WindowItem>*>(lParam);
@@ -273,14 +276,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                  enumerator, winOp, presetMgr, perWinSettings, iconTex, g_hWnd);
 
         ImGui::Render();
-        g_pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
-        g_pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-        g_pd3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-        D3DCOLOR clear_col = D3DCOLOR_RGBA(0, 0, 0, 0);
-        g_pd3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET, clear_col, 1.0f, 0);
-        if (g_pd3dDevice->BeginScene() >= 0) {
-            ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
-            g_pd3dDevice->EndScene();
+        if (g_pd3dDevice) {
+            g_pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+            g_pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+            g_pd3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+            D3DCOLOR clear_col = D3DCOLOR_RGBA(0, 0, 0, 0);
+            g_pd3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET, clear_col, 1.0f, 0);
+            if (g_pd3dDevice->BeginScene() >= 0) {
+                ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+                g_pd3dDevice->EndScene();
+            }
         }
         HRESULT hr = g_pd3dDevice->Present(nullptr, nullptr, nullptr, nullptr);
         if (hr == D3DERR_DEVICELOST)
