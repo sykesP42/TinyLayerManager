@@ -102,39 +102,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_ERASEBKGND:
         return 1;
 
-    case WM_SETCURSOR:
-        if (UILocateMode()) {
-            SetCursor(LoadCursorW(NULL, MAKEINTRESOURCEW(32515))); // IDC_CROSS
-            return TRUE;
-        }
-        // Let DefWindowProc handle all other cursor states
-        return DefWindowProcW(hWnd, msg, wParam, lParam);
-
-    case WM_TIMER:
-        if (wParam == 1 && UILocateMode()) {
-            // Poll mouse state for locate mode
-            if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) {
-                POINT pt; GetCursorPos(&pt);
-                HWND target = WindowFromPoint(pt);
-                if (target) target = GetAncestor(target, GA_ROOT);
-                UILocateTarget() = (uint64_t)target;
-                UILocateMode() = false;
-                KillTimer(hWnd, 1);
-                ShowWindow(hWnd, SW_RESTORE);
-                SetForegroundWindow(hWnd);
-                return 0;
-            }
-            else if (GetAsyncKeyState(VK_ESCAPE) & 0x8000 ||
-                     GetAsyncKeyState(VK_RBUTTON) & 0x8000) {
-                UILocateMode() = false;
-                KillTimer(hWnd, 1);
-                ShowWindow(hWnd, SW_RESTORE);
-                SetForegroundWindow(hWnd);
-                return 0;
-            }
-        }
-        break; // Let DefWindowProc handle other timers
-
     case WM_APP + 1: { // enumeration results from background thread
         auto* p = reinterpret_cast<std::vector<WindowItem>*>(lParam);
         if (p) { g_windows = std::move(*p); delete p; }

@@ -46,12 +46,8 @@ static struct {
     DWORD lastTick = 0;
     int closeTarget = -1;
     bool effectsHidden = false;
-    bool locating = false;       // crosshair window picker mode
     uint64_t locateTarget = 0;   // HWND picked during locate
 } g;
-
-bool& UILocateMode()      { return g.locating; }
-uint64_t& UILocateTarget() { return g.locateTarget; }
 
 static void saveSettings(PerWindowSettings& perWin, const std::wstring& e, const std::wstring& t) {
     PerWindowData d;
@@ -241,10 +237,29 @@ void RenderUI(Theme& theme, std::string& themeName,
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Text, theme.accentColor);
     if (ImGui::SmallButton("+")) {
-        g.locating = true;
-        g.locateTarget = 0;
-        SetTimer(hWnd, 1, 50, NULL); // poll mouse every 50ms
-        ShowWindow(hWnd, SW_MINIMIZE);
+        // ── Locate mode: hide TLM, wait for click, pick window ──
+        ShowWindow(hWnd, SW_HIDE);
+        // Drain any pending messages so the hide takes effect
+        MSG m; while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&m); DispatchMessageW(&m);
+        }
+        Sleep(100); // let the window disappear
+        // Poll for click or ESC
+        bool cancelled = false;
+        while (true) {
+            if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) break;
+            if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) { cancelled = true; break; }
+            if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) { cancelled = true; break; }
+            Sleep(30);
+        }
+        if (!cancelled) {
+            POINT pt; GetCursorPos(&pt);
+            HWND target = WindowFromPoint(pt);
+            if (target) target = GetAncestor(target, GA_ROOT);
+            g.locateTarget = (uint64_t)target;
+        }
+        ShowWindow(hWnd, SW_RESTORE);
+        SetForegroundWindow(hWnd);
     }
     if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::Text("Click to locate a window\nESC or right-click to cancel"); ImGui::EndTooltip(); }
     ImGui::PopStyleColor();
