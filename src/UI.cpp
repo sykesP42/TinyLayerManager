@@ -42,6 +42,7 @@ static struct {
     int tintB = 255;
     int tintIntensity = 0;
     char presetName[128] = {};
+    char pathBuf[1024] = {};
     uint64_t lastTick = 0;
     int closeTarget = -1;
     bool effectsHidden = false;
@@ -489,10 +490,18 @@ void RenderUI(Theme& theme, std::string& themeName,
             ImGui::PopStyleColor();
         }
 
-        // exe path
-        ImGui::PushStyleColor(ImGuiCol_Text, theme.textSecondaryColor);
-        ImGui::TextUnformatted(to_utf8(win.exe).c_str());
-        ImGui::PopStyleColor();
+        // exe path (copyable)
+        {
+            std::string p = to_utf8(win.exe);
+            snprintf(g.pathBuf, sizeof(g.pathBuf), "%s", p.c_str());
+            ImGui::PushItemWidth(rw);
+            ImGui::PushStyleColor(ImGuiCol_Text, theme.textSecondaryColor);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+            ImGui::InputText("##path", g.pathBuf, sizeof(g.pathBuf),
+                             ImGuiInputTextFlags_ReadOnly);
+            ImGui::PopStyleColor(2);
+            ImGui::PopItemWidth();
+        }
         ImGui::Dummy(ImVec2(0, 4));
 
         // ── Details: position + PID ──
