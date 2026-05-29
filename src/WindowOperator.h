@@ -38,6 +38,7 @@ private:
         HBRUSH bgBrush = nullptr; // cached background brush, destroyed on update
     };
     static std::map<HWND, TintOverlay> s_overlays;
+    static std::map<HWND, unsigned char> s_alphaMap; // track per-window alpha for hide/show
     static void createOverlay(HWND hWnd, TintOverlay& ov);
     static void updateOverlay(HWND hWnd, TintOverlay& ov);
 

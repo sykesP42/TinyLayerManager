@@ -21,6 +21,7 @@ bool WindowOperator::setAlphaByTitle(const std::wstring& title, unsigned char al
 bool WindowOperator::setWindowAlpha(HWND hWnd, unsigned char alpha) {
 #ifdef _WIN32
     if (!hWnd) return false;
+    s_alphaMap[hWnd] = alpha;
     LONG ex = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
     if (!(ex & WS_EX_LAYERED))
         SetWindowLongPtrW(hWnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
@@ -124,6 +125,7 @@ HWND WindowOperator::findWindowByTitle(const std::wstring& title) {
 }
 
 std::map<HWND, WindowOperator::TintOverlay> WindowOperator::s_overlays;
+std::map<HWND, unsigned char> WindowOperator::s_alphaMap;
 bool WindowOperator::s_liveRefresh = true;
 
 void WindowOperator::setWindowTint(HWND hWnd, int tintR, int tintG, int tintB, int tintIntensity) {
@@ -222,9 +224,18 @@ void WindowOperator::updateAllOverlays() {
 }
 
 void WindowOperator::setAllOverlaysVisible(bool visible) {
+    // Toggle overlay tint windows
     for (auto& [hwnd, ov] : s_overlays) {
         if (ov.overlayHwnd && IsWindow(ov.overlayHwnd))
             ShowWindow(ov.overlayHwnd, visible ? SW_SHOWNA : SW_HIDE);
+    }
+    // Toggle window transparency
+    for (auto& [hwnd, alpha] : s_alphaMap) {
+        if (!IsWindow(hwnd)) continue;
+        if (visible)
+            SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+        else
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     }
     // Re-position when showing again (target window may have moved)
     if (visible)
