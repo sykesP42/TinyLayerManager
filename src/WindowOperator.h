@@ -29,6 +29,7 @@ public:
     static void cleanupAllOverlays();
     static void destroyOrphanedOverlays();
     static bool s_liveRefresh;
+    static bool s_overlaysVisible;
     static void setAllOverlaysVisible(bool visible);
 
 private:

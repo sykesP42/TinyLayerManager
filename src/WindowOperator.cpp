@@ -127,6 +127,7 @@ HWND WindowOperator::findWindowByTitle(const std::wstring& title) {
 std::map<HWND, WindowOperator::TintOverlay> WindowOperator::s_overlays;
 std::map<HWND, unsigned char> WindowOperator::s_alphaMap;
 bool WindowOperator::s_liveRefresh = true;
+bool WindowOperator::s_overlaysVisible = true;
 
 void WindowOperator::setWindowTint(HWND hWnd, int tintR, int tintG, int tintB, int tintIntensity) {
     if (!hWnd || !IsWindow(hWnd)) return;
@@ -181,8 +182,8 @@ void WindowOperator::updateOverlay(HWND hWnd, TintOverlay& ov) {
         return;
     }
 
-    // Hide overlay when target is minimized, show when restored
-    if (IsIconic(hWnd)) {
+    // Hide overlay when target is minimized or overlays globally hidden
+    if (IsIconic(hWnd) || !s_overlaysVisible) {
         ShowWindow(ov.overlayHwnd, SW_HIDE);
         return;
     }
@@ -224,6 +225,7 @@ void WindowOperator::updateAllOverlays() {
 }
 
 void WindowOperator::setAllOverlaysVisible(bool visible) {
+    s_overlaysVisible = visible;
     // Toggle overlay tint windows
     for (auto& [hwnd, ov] : s_overlays) {
         if (ov.overlayHwnd && IsWindow(ov.overlayHwnd))

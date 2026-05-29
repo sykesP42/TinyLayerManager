@@ -47,7 +47,20 @@ static struct {
     int closeTarget = -1;
     bool effectsHidden = false;
     uint64_t locateTarget = 0;   // HWND picked during locate
+    bool startLocate = false;    // flag: main loop should start locate
+    uint64_t selHwnd = 0;        // HWND of selected window (for stable selection across refreshes)
 } g;
+
+static void reselectByHwnd(std::vector<WindowItem>& windows) {
+    if (g.selHwnd == 0) { g.sel = -1; return; }
+    for (int i = 0; i < (int)windows.size(); i++) {
+        if (windows[i].hwnd == g.selHwnd) { g.sel = i; return; }
+    }
+    g.sel = -1; // window gone
+}
+
+bool& UIStartLocate()   { return g.startLocate; }
+uint64_t& UILocateTarget() { return g.locateTarget; }
 
 static void saveSettings(PerWindowSettings& perWin, const std::wstring& e, const std::wstring& t) {
     PerWindowData d;
@@ -96,6 +109,9 @@ void RenderUI(Theme& theme, std::string& themeName,
         });
     }
     uint64_t now = GetTickCount();
+
+    // Keep selected window stable across list refreshes
+    reselectByHwnd(windows);
     if (!enumerator.isRunning() && now - g.lastTick > 2000) {
         g.lastTick = now;
         enumerator.start([hWnd](std::vector<WindowItem> items) {
@@ -121,6 +137,7 @@ void RenderUI(Theme& theme, std::string& themeName,
                 if (g.sel >= 0 && g.sel < (int)windows.size())
                     saveSettings(perWin, windows[g.sel].exe, windows[g.sel].title);
                 g.sel = i;
+                g.selHwnd = windows[i].hwnd;
                 loadSettings(perWin, windows[i].exe, windows[i].title);
                 HWND h = (HWND)windows[i].hwnd;
                 if (h) {
@@ -174,10 +191,14 @@ void RenderUI(Theme& theme, std::string& themeName,
     dl->AddRectFilled(origin, ImVec2(origin.x + ww, origin.y + th),
         ImGui::GetColorU32(theme.titleBarColor));
 
-    // ── Drag area (created FIRST so buttons capture clicks on top) ──
-    float rightBtnWidth = (38 + 38 + 38 + 5 + 28 + 28) * S; // min+max+close+sep+theme+locate
-    ImGui::SetCursorScreenPos(origin);
-    ImGui::InvisibleButton("##drag", ImVec2(ww - rightBtnWidth, th));
+    // ── Drag area (between left buttons and right buttons, no overlap) ──
+    float leftBtnWidth = 380 * S;  // space for left-side buttons + locate
+    float rightBtnWidth = (38 + 38 + 38 + 5 + 28) * S; // min+max+close+sep+theme
+    float dragX = origin.x + leftBtnWidth;
+    float dragW = ww - leftBtnWidth - rightBtnWidth;
+    if (dragW > 20 * S) {
+        ImGui::SetCursorScreenPos(ImVec2(dragX, origin.y));
+        ImGui::InvisibleButton("##drag", ImVec2(dragW, th));
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) {
         ReleaseCapture();
         SendMessageW(hWnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
@@ -185,6 +206,7 @@ void RenderUI(Theme& theme, std::string& themeName,
     }
     if (ImGui::IsMouseDoubleClicked(0) && ImGui::IsItemHovered())
         ShowWindow(hWnd, IsZoomed(hWnd) ? SW_RESTORE : SW_MAXIMIZE);
+    } // end if (dragW > 20)
 
     // ── Left-side controls ──
     float tlmY = titleMidY - ImGui::GetFontSize() / 2;
@@ -236,32 +258,12 @@ void RenderUI(Theme& theme, std::string& themeName,
     // Locate button — crosshair window picker
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Text, theme.accentColor);
+    ImGui::PushID("locate_btn");
     if (ImGui::SmallButton("+")) {
-        // ── Locate mode: hide TLM, wait for click, pick window ──
-        ShowWindow(hWnd, SW_HIDE);
-        // Drain any pending messages so the hide takes effect
-        MSG m; while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&m); DispatchMessageW(&m);
-        }
-        Sleep(100); // let the window disappear
-        // Poll for click or ESC
-        bool cancelled = false;
-        while (true) {
-            if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) break;
-            if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) { cancelled = true; break; }
-            if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) { cancelled = true; break; }
-            Sleep(30);
-        }
-        if (!cancelled) {
-            POINT pt; GetCursorPos(&pt);
-            HWND target = WindowFromPoint(pt);
-            if (target) target = GetAncestor(target, GA_ROOT);
-            g.locateTarget = (uint64_t)target;
-        }
-        ShowWindow(hWnd, SW_RESTORE);
-        SetForegroundWindow(hWnd);
+        g.startLocate = true; // signal main loop to handle locate
     }
-    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::Text("Click to locate a window\nESC or right-click to cancel"); ImGui::EndTooltip(); }
+    ImGui::PopID();
+    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::Text("Locate a window by clicking on it"); ImGui::EndTooltip(); }
     ImGui::PopStyleColor();
 
     // ── Right-side buttons (created last, on top of drag area) ──
@@ -398,6 +400,10 @@ void RenderUI(Theme& theme, std::string& themeName,
         bool isSel = (g.sel == ri);
         bool isChk = g.rows.count(ri) > 0;
 
+        // Auto-scroll to selected item during locate mode
+        if (isSel && g.locateTarget != 0)
+            ImGui::SetScrollHereY(0.3f);
+
         ImGui::PushID(ri);
         ImVec2 itemPos = ImGui::GetCursorScreenPos();
         float ix = itemPos.x, iy = itemPos.y;
@@ -407,6 +413,7 @@ void RenderUI(Theme& theme, std::string& themeName,
             if (g.sel >= 0 && g.sel < (int)windows.size())
                 saveSettings(perWin, windows[g.sel].exe, windows[g.sel].title);
             g.sel = ri;
+            g.selHwnd = win.hwnd;
             loadSettings(perWin, win.exe, win.title);
             HWND h = (HWND)win.hwnd;
             if (h) {
@@ -441,7 +448,7 @@ void RenderUI(Theme& theme, std::string& themeName,
         // icon
         float iconS = 16 * S;
         float iconX = ix + 24 * S, iconY = iy + (itemH - iconS) / 2;
-        LPDIRECT3DTEXTURE9 srv = iconTex.get(win.exe, win.hwnd);
+        ID3D11ShaderResourceView* srv = iconTex.get(win.exe, win.hwnd);
         if (srv)
             dl2->AddImage((ImTextureID)(intptr_t)srv, ImVec2(iconX,iconY), ImVec2(iconX+iconS,iconY+iconS));
         else
@@ -540,7 +547,7 @@ void RenderUI(Theme& theme, std::string& themeName,
         // ── Title section: icon + title + exe path ──
         ImGui::SetCursorPos(ImVec2(12, 10));
         {
-            LPDIRECT3DTEXTURE9 srv = iconTex.get(win.exe, win.hwnd);
+            ID3D11ShaderResourceView* srv = iconTex.get(win.exe, win.hwnd);
             if (srv) {
                 ImGui::Image((ImTextureID)(intptr_t)srv, ImVec2(24, 24));
                 ImGui::SameLine();

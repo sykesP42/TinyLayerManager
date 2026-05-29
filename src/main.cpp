@@ -1,12 +1,12 @@
 #define WIN32_LEAN_AND_MEAN
-#define _WIN32_WINNT 0x0501
+#define _WIN32_WINNT 0x0600
 #include <windows.h>
-#include <d3d9.h>
+#include <d3d11.h>
 #include <vector>
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
-#include "imgui_impl_dx9.h"
+#include "imgui_impl_dx11.h"
 
 #include "WindowItem.h"
 #include "WindowEnumerator.h"
@@ -20,10 +20,11 @@
 
 extern float g_dpiScale;
 
-// ── D3D9 globals ──
-static LPDIRECT3D9              g_pD3D = nullptr;
-static LPDIRECT3DDEVICE9        g_pd3dDevice = nullptr;
-static D3DPRESENT_PARAMETERS    g_d3dpp = {};
+// ── D3D11 globals ──
+static ID3D11Device*         g_pd3dDevice         = nullptr;
+static ID3D11DeviceContext*  g_pd3dDeviceContext   = nullptr;
+static IDXGISwapChain*       g_pSwapChain          = nullptr;
+static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 
 static HWND g_hWnd = nullptr;
 static bool g_running = true;
@@ -32,36 +33,53 @@ static bool g_running = true;
 static std::vector<WindowItem> g_windows;
 static bool g_shouldRefresh = true;
 
-// ── D3D9 helpers ──
+// ── D3D11 helpers ──
+static void CreateRenderTarget() {
+    ID3D11Texture2D* back = nullptr;
+    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&back));
+    if (back) {
+        g_pd3dDevice->CreateRenderTargetView(back, nullptr, &g_mainRenderTargetView);
+        back->Release();
+    }
+}
+
 static bool CreateDeviceD3D(HWND hWnd) {
-    if ((g_pD3D = Direct3DCreate9(D3D_SDK_VERSION)) == nullptr)
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount       = 2;
+    sd.BufferDesc.Width  = 0;
+    sd.BufferDesc.Height = 0;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.RefreshRate.Numerator   = 60;
+    sd.BufferDesc.RefreshRate.Denominator = 1;
+    sd.Flags             = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    sd.BufferUsage       = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow      = hWnd;
+    sd.SampleDesc.Count  = 1;
+    sd.SampleDesc.Quality = 0;
+    sd.Windowed          = TRUE;
+    sd.SwapEffect        = DXGI_SWAP_EFFECT_DISCARD;
+
+    UINT createFlags         = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    D3D_FEATURE_LEVEL levels[]{ D3D_FEATURE_LEVEL_11_0 };
+
+    if (D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE,
+            nullptr, createFlags, levels, 1, D3D11_SDK_VERSION,
+            &sd, &g_pSwapChain, &g_pd3dDevice, nullptr, &g_pd3dDeviceContext) != S_OK)
         return false;
 
-    ZeroMemory(&g_d3dpp, sizeof(g_d3dpp));
-    g_d3dpp.Windowed          = TRUE;
-    g_d3dpp.SwapEffect        = D3DSWAPEFFECT_DISCARD;
-    g_d3dpp.BackBufferFormat  = D3DFMT_UNKNOWN;
-    g_d3dpp.EnableAutoDepthStencil = FALSE;
-    g_d3dpp.PresentationInterval   = D3DPRESENT_INTERVAL_ONE;
-
-    if (g_pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
-            D3DCREATE_HARDWARE_VERTEXPROCESSING,
-            &g_d3dpp, &g_pd3dDevice) < 0)
-        return false;
-
+    CreateRenderTarget();
     return true;
 }
 
-static void CleanupDeviceD3D() {
-    if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
-    if (g_pD3D)       { g_pD3D->Release();       g_pD3D       = nullptr; }
+static void CleanupRenderTarget() {
+    if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
 }
 
-static void ResetDevice() {
-    ImGui_ImplDX9_InvalidateDeviceObjects();
-    HRESULT hr = g_pd3dDevice->Reset(&g_d3dpp);
-    if (hr == D3D_OK)
-        ImGui_ImplDX9_CreateDeviceObjects();
+static void CleanupDeviceD3D() {
+    CleanupRenderTarget();
+    if (g_pSwapChain)        { g_pSwapChain->Release();        g_pSwapChain        = nullptr; }
+    if (g_pd3dDeviceContext) { g_pd3dDeviceContext->Release(); g_pd3dDeviceContext = nullptr; }
+    if (g_pd3dDevice)        { g_pd3dDevice->Release();        g_pd3dDevice        = nullptr; }
 }
 
 // ── Window procedure ──
@@ -82,10 +100,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
 
     case WM_SIZE:
-        if (wParam != SIZE_MINIMIZED) {
-            g_d3dpp.BackBufferWidth  = (UINT)LOWORD(lParam);
-            g_d3dpp.BackBufferHeight = (UINT)HIWORD(lParam);
-            if (g_pd3dDevice) ResetDevice();
+        if (g_pd3dDevice && wParam != SIZE_MINIMIZED) {
+            CleanupRenderTarget();
+            g_pSwapChain->ResizeBuffers(0,
+                (UINT)LOWORD(lParam), (UINT)HIWORD(lParam),
+                DXGI_FORMAT_UNKNOWN, 0);
+            CreateRenderTarget();
         }
         return 0;
 
@@ -117,13 +137,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
 // ── Entry point ──
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
-    // DPI awareness: Vista+ has SetProcessDPIAware; on XP it's a no-op
-    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
-    if (hUser32) {
-        typedef BOOL (WINAPI *PFN_SetProcessDPIAware)();
-        auto pfn = (PFN_SetProcessDPIAware)GetProcAddress(hUser32, "SetProcessDPIAware");
-        if (pfn) pfn();
-    }
+    SetProcessDPIAware();
 
     WNDCLASSEXW wc = {};
     wc.cbSize        = sizeof(WNDCLASSEXW);
@@ -196,7 +210,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     }
 
     ImGui_ImplWin32_Init(g_hWnd);
-    ImGui_ImplDX9_Init(g_pd3dDevice);
+    ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
     // Backend modules
     std::string   themeName = Theme::loadFromFile();
@@ -232,10 +246,91 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
         if (!g_running) break;
 
-        // Skip rendering when minimized
+        // Skip rendering when minimized — swap chain has 0-size buffers
+        // and ImGui chokes on a 0x0 viewport.
         if (IsIconic(g_hWnd)) { WaitMessage(); continue; }
 
-        ImGui_ImplDX9_NewFrame();
+        // ── Locate mode: live preview + click to lock ──
+        if (UIStartLocate()) {
+            UIStartLocate() = false;
+
+            // TLM stays visible, becomes topmost to show the list updating
+            SetWindowPos(g_hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+
+            // Create a border overlay window (highlight frame around target)
+            const int BORDER = 4;
+            DWORD orange = 0x00FFA500; // BGR: orange
+            HWND hOverlay = CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+                L"Static", L"", WS_POPUP,
+                0, 0, 100, 100, nullptr, nullptr, hInstance, nullptr);
+            // Semi-transparent orange overlay
+            SetLayeredWindowAttributes(hOverlay, 0, 100, LWA_ALPHA);
+
+            bool done = false;
+            HWND prevTarget = nullptr;
+
+            while (g_running && !done) {
+                MSG m;
+                while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+                    if (m.message == WM_QUIT) { g_running = false; break; }
+                    TranslateMessage(&m);
+                    DispatchMessageW(&m);
+                }
+                if (!g_running) break;
+
+                if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) { done = true; break; }
+                if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) break;
+                if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) break;
+
+                // Find window under cursor
+                POINT pt; GetCursorPos(&pt);
+                HWND target = WindowFromPoint(pt);
+                if (target && target != hOverlay) target = GetAncestor(target, GA_ROOT);
+                else target = nullptr;
+
+                // Update overlay position and list selection
+                if (target != prevTarget) {
+                    prevTarget = target;
+                    if (target) {
+                        RECT rc; GetWindowRect(target, &rc);
+                        SetWindowPos(hOverlay, HWND_TOPMOST,
+                            rc.left - BORDER, rc.top - BORDER,
+                            (rc.right - rc.left) + BORDER * 2,
+                            (rc.bottom - rc.top) + BORDER * 2,
+                            SWP_SHOWWINDOW | SWP_NOACTIVATE);
+                    } else {
+                        ShowWindow(hOverlay, SW_HIDE);
+                    }
+
+                    // Update TLM list to highlight hovered window
+                    UILocateTarget() = (uint64_t)target;
+                    ImGui_ImplDX11_NewFrame();
+                    ImGui_ImplWin32_NewFrame();
+                    ImGui::NewFrame();
+                    RenderUI(currentTheme, themeName, g_windows, g_shouldRefresh,
+                             enumerator, winOp, presetMgr, perWinSettings, iconTex, g_hWnd);
+                    ImGui::Render();
+                    g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
+                    float cc[4] = {0};
+                    g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, cc);
+                    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+                    g_pSwapChain->Present(1, 0);
+                }
+                Sleep(50);
+            }
+
+            // Cleanup overlay
+            DestroyWindow(hOverlay);
+            if (!done) UILocateTarget() = 0; // cancelled
+
+            // Restore normal z-order
+            SetWindowPos(g_hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            SetForegroundWindow(g_hWnd);
+            continue;
+        }
+
+        ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
@@ -243,26 +338,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                  enumerator, winOp, presetMgr, perWinSettings, iconTex, g_hWnd);
 
         ImGui::Render();
-        if (g_pd3dDevice) {
-            g_pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
-            g_pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-            g_pd3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-            D3DCOLOR clear_col = D3DCOLOR_RGBA(0, 0, 0, 0);
-            g_pd3dDevice->Clear(0, nullptr, D3DCLEAR_TARGET, clear_col, 1.0f, 0);
-            if (g_pd3dDevice->BeginScene() >= 0) {
-                ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
-                g_pd3dDevice->EndScene();
-            }
-        }
-        HRESULT hr = g_pd3dDevice->Present(nullptr, nullptr, nullptr, nullptr);
-        if (hr == D3DERR_DEVICELOST)
-            ResetDevice();
+        g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
+        float clear_color[4] = { 0 };
+        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        g_pSwapChain->Present(1, 0);
     }
 
     WindowOperator::cleanupAllOverlays();
     eventMon.stop();
     DestroyWindow(g_hWnd);
-    ImGui_ImplDX9_Shutdown();
+    ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
     CleanupDeviceD3D();
