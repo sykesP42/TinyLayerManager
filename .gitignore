@@ -1,0 +1,24 @@
+# Build output
+/build/
+/build_mingw/
+/build_mingw64/
+/release/
+
+# IDE / Tools
+/.vs/
+/.claude/
+/.superpowers/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Visual Studio
+*.user
+*.vcxproj*
+
+# Icon assets
+*.ico
+src/resources.rc
