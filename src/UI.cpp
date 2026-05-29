@@ -178,7 +178,19 @@ void RenderUI(Theme& theme, std::string& themeName,
     dl->AddRectFilled(origin, ImVec2(origin.x + ww, origin.y + th),
         ImGui::GetColorU32(theme.titleBarColor));
 
-    // All left-side controls chain via SameLine for automatic spacing.
+    // ── Drag area (created FIRST so buttons capture clicks on top) ──
+    float rightBtnWidth = (38 + 38 + 38 + 5 + 28 + 28) * S; // min+max+close+sep+theme+locate
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::InvisibleButton("##drag", ImVec2(ww - rightBtnWidth, th));
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) {
+        ReleaseCapture();
+        SendMessageW(hWnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        ImGui::GetIO().MouseDown[0] = false;
+    }
+    if (ImGui::IsMouseDoubleClicked(0) && ImGui::IsItemHovered())
+        ShowWindow(hWnd, IsZoomed(hWnd) ? SW_RESTORE : SW_MAXIMIZE);
+
+    // ── Left-side controls ──
     float tlmY = titleMidY - ImGui::GetFontSize() / 2;
     ImGui::SetCursorScreenPos(ImVec2(origin.x + 12, tlmY));
     ImGui::Text("TLM");
@@ -202,6 +214,7 @@ void RenderUI(Theme& theme, std::string& themeName,
         g.effectsHidden = !g.effectsHidden;
         WindowOperator::setAllOverlaysVisible(!g.effectsHidden);
     }
+    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::Text("Toggle color tint overlays"); ImGui::EndTooltip(); }
     ImGui::PopStyleColor();
 
     ImGui::SameLine();
@@ -211,6 +224,7 @@ void RenderUI(Theme& theme, std::string& themeName,
         if (WindowOperator::s_liveRefresh)
             WindowOperator::updateAllOverlays();
     }
+    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::Text("Auto-refresh overlay positions"); ImGui::EndTooltip(); }
     ImGui::PopStyleColor();
 
     ImGui::SameLine();
@@ -220,6 +234,7 @@ void RenderUI(Theme& theme, std::string& themeName,
         g.alpha = 255; g.topChecked = false;
         g.tintR = 255; g.tintG = 255; g.tintB = 255; g.tintIntensity = 0;
     }
+    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::Text("Reset all overlays and settings"); ImGui::EndTooltip(); }
     ImGui::PopStyleColor();
 
     // Locate button — crosshair window picker
@@ -231,25 +246,10 @@ void RenderUI(Theme& theme, std::string& themeName,
         SetTimer(hWnd, 1, 50, NULL); // poll mouse every 50ms
         ShowWindow(hWnd, SW_MINIMIZE);
     }
-    if (ImGui::IsItemHovered()) {
-        ImGui::BeginTooltip();
-        ImGui::Text("Click to locate a window (ESC to cancel)");
-        ImGui::EndTooltip();
-    }
+    if (ImGui::IsItemHovered()) { ImGui::BeginTooltip(); ImGui::Text("Click to locate a window\nESC or right-click to cancel"); ImGui::EndTooltip(); }
     ImGui::PopStyleColor();
 
-    // drag area — spans full title bar, buttons excluded on the right
-    ImGui::SetCursorScreenPos(origin);
-    ImGui::InvisibleButton("##drag", ImVec2(ww - 178 * S, th));
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) {
-        ReleaseCapture();
-        SendMessageW(hWnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-        ImGui::GetIO().MouseDown[0] = false;
-    }
-    if (ImGui::IsMouseDoubleClicked(0) && ImGui::IsItemHovered())
-        ShowWindow(hWnd, IsZoomed(hWnd) ? SW_RESTORE : SW_MAXIMIZE);
-
-    // buttons (right to left) — drawn via draw-list for font-independent sizing
+    // ── Right-side buttons (created last, on top of drag area) ──
     float bx = origin.x + ww;
     ImU32 colSec = ImGui::GetColorU32(theme.textSecondaryColor);
     ImU32 colDanger = ImGui::GetColorU32(theme.dangerColor);
